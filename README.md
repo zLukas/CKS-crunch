@@ -12,10 +12,11 @@ Content is organized as bite-sized practice labs with step-by-step instructions,
 ## Included labs (examples)
 
 - Admissionwebhook/
-  - `practise-lab-warmup.txt` - warmup exercises for admission webhooks and TLS setup
-  - `practise-lab-1-normal.txt` - validating webhook troubleshooting lab (deny pods running as root)
-  - `practise-lab-2-hard.txt` - mutating + validating webhooks (mutate labels, deny root)
-  - `practise-lab-3-nightmare.txt` - advanced scenario combining webhooks with NetworkPolicy
+- etcd
+- host-hardening
+- image-hardening
+- rbac
+
 
 Each lab contains:
 - broken or incomplete YAML manifests to fix
