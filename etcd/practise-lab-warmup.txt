@@ -1,0 +1,68 @@
+==============================================
+CKS PRACTICE: ETCD — GENERAL QUESTIONS (EASY)
+==============================================
+
+Q1 — Enable and Verify ETCD Encryption at Rest
+----------------------------------------------
+Scenario:
+Your Minikube control plane has no data encryption enabled.
+Configure encryption at rest for Kubernetes Secrets using `aesgcm` provider.
+
+Tasks:
+  1. Generate a 32-byte base64-encoded encryption key.
+  2. Create an encryption configuration file at `/etc/kubernetes/encryption-config.yaml`
+     using `aescbc` or `aesgcm`.
+  3. Update `/etc/kubernetes/manifests/kube-apiserver.yaml` to include:
+        --encryption-provider-config=/etc/kubernetes/encryption-config.yaml
+  4. Restart the control plane (Minikube will do this automatically).
+  5. Verify encryption:
+        kubectl create secret generic test-secret --from-literal=pass=ckstest
+        sudo ETCDCTL_API=3 etcdctl get /registry/secrets/default/test-secret \
+             --endpoints=https://127.0.0.1:2379 \
+             --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+             --cert=/etc/kubernetes/pki/etcd/server.crt \
+             --key=/etc/kubernetes/pki/etcd/server.key | hexdump -C
+     Expected: Encrypted blob, not readable plaintext.
+
+Q2 — Backup and Restore ETCD Data
+---------------------------------
+Scenario:
+Before upgrading Kubernetes, you must back up and restore etcd data.
+
+Tasks:
+  1. Take a backup:
+        sudo ETCDCTL_API=3 etcdctl snapshot save /opt/etcd-backup.db \
+             --endpoints=https://127.0.0.1:2379 \
+             --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+             --cert=/etc/kubernetes/pki/etcd/server.crt \
+             --key=/etc/kubernetes/pki/etcd/server.key
+  2. Verify snapshot integrity:
+        ETCDCTL_API=3 etcdctl snapshot status /opt/etcd-backup.db
+  3. Restore from backup:
+        sudo systemctl stop kubelet
+        sudo mv /var/lib/etcd /var/lib/etcd.old
+        ETCDCTL_API=3 etcdctl snapshot restore /opt/etcd-backup.db \
+            --data-dir=/var/lib/etcd
+        sudo systemctl start kubelet
+  4. Confirm cluster returns healthy:
+        kubectl get nodes
+        ETCDCTL_API=3 etcdctl endpoint health
+
+Q3 — Rotate ETCD Certificates
+------------------------------
+Scenario:
+ETCD certificates are expiring soon. Rotate and verify them.
+
+Tasks:
+  1. Create new certs under `/etc/kubernetes/pki/etcd/`.
+  2. Update kube-apiserver and etcd static pods to use new certificates.
+  3. Restart pods and ensure etcd health:
+        ETCDCTL_API=3 etcdctl endpoint health
+  4. Confirm Kubernetes can still read/write secrets.
+
+Expected:
+  All pods return to Ready state, and etcdctl commands succeed.
+
+==============================================
+END OF EASY PRACTICE QUESTIONS
+==============================================

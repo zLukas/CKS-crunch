@@ -1,0 +1,55 @@
+==============================================
+CKS DEBUG CHALLENGE (NORMAL)
+TOPIC: APPARMOR PROFILE MISCONFIGURATION
+==============================================
+
+Scenario:
+A custom AppArmor profile `web-deny-write` is supposed to prevent containers from writing to `/etc`, but it doesn’t work — containers can still modify `/etc`.
+
+Goal:
+Fix the profile and confirm enforcement.
+
+==============================================
+SECTION A — BROKEN CONFIGURATION
+==============================================
+# File: /etc/apparmor.d/web-deny-write
+profile web-deny-write {
+  file,
+  deny /etc/ rw,      # Incorrect syntax — should use 'deny /etc/** w,'
+}
+
+==============================================
+SECTION B — TASKS
+==============================================
+1️⃣ Fix profile:
+   #include <tunables/global>
+   profile web-deny-write flags=(attach_disconnected,mediate_deleted) {
+     #include <abstractions/base>
+     file,
+     deny /etc/** w,
+   }
+
+2️⃣ Reload profile:
+   sudo apparmor_parser -r /etc/apparmor.d/web-deny-write
+
+3️⃣ Run test container:
+   docker run --rm --security-opt apparmor=web-deny-write alpine sh -c "echo test > /etc/blocked"
+
+4️⃣ Check logs:
+   sudo dmesg | grep DENIED
+
+Expected:
+  - Write attempt blocked.
+  - AppArmor logs denial in kernel messages.
+
+==============================================
+SECTION C — VERIFICATION
+==============================================
+[ ] Profile syntax fixed  
+[ ] Profile loaded successfully  
+[ ] Denial confirmed in logs  
+[ ] Container behavior restricted  
+
+==============================================
+END OF NORMAL DEBUG CHALLENGE
+==============================================

@@ -1,0 +1,412 @@
+========================================
+CKS PRACTICE: ADMISSION WEBHOOKS (MINIKUBE)
+========================================
+
+==============================
+SECTION 1: PRACTICE QUESTIONS
+==============================
+
+Question 1: Create a Validating Admission Webhook
+-------------------------------------------------
+Objective:
+  Create a Validating Webhook that denies Pods running as root.
+
+Tasks:
+  1. Start Minikube and create a namespace "admission-demo".
+  2. Deploy a webhook server that listens on /validate and denies runAsNonRoot=false.
+  3. Create a ValidatingWebhookConfiguration targeting pods in "admission-demo".
+  4. Test by creating Pods with runAsNonRoot true and false.
+
+Verification:
+  - Pod with runAsNonRoot=true → allowed
+  - Pod with runAsNonRoot=false → denied
+
+
+Question 2: Debugging – Missing TLS Setup
+-----------------------------------------
+Scenario:
+  A webhook server deployment and ValidatingWebhookConfiguration are deployed,
+  but API requests fail with:
+
+  "x509: certificate signed by unknown authority"
+
+Tasks:
+  1. Create and mount a valid TLS certificate and key inside the webhook pod.
+  2. Create a Kubernetes Secret with the cert/key.
+  3. Mount it to /etc/webhook/certs.
+  4. Add base64-encoded CA bundle to ValidatingWebhookConfiguration.clientConfig.caBundle.
+  5. Redeploy and test.
+
+
+Question 3: Mutating Admission Webhook – Add Label
+--------------------------------------------------
+Objective:
+  Deploy a Mutating Webhook that adds the label "security=scan-required" to all new Pods.
+
+Tasks:
+  1. Create and deploy a webhook service that mutates incoming Pod JSON.
+  2. Configure MutatingWebhookConfiguration to apply to CREATE operations on Pods.
+  3. Verify that any new Pod gets the label automatically.
+
+Verification:
+  kubectl run test --image=nginx
+  kubectl get pod test -o jsonpath='{.metadata.labels.security}'
+  → Output should be "scan-required".
+
+
+Question 4: Debugging – Timeout and Match Policy
+------------------------------------------------
+Scenario:
+  Pod creation intermittently fails with:
+  "failed calling webhook: context deadline exceeded"
+
+Tasks:
+  1. Increase timeoutSeconds in ValidatingWebhookConfiguration (e.g. from 1 → 10).
+  2. Verify webhook Service and path match Deployment.
+  3. Test Pod creation again.
+
+
+Question 5: Debugging – Incorrect Matching Rules
+------------------------------------------------
+Scenario:
+  Webhook meant to validate ConfigMaps never triggers.
+
+Tasks:
+  1. Fix apiGroups in ValidatingWebhookConfiguration rules.
+  2. For core resources (Pods, ConfigMaps, Secrets), apiGroup must be "" not "core".
+  3. Redeploy and test by creating a ConfigMap.
+
+
+==============================
+SECTION 2: PYTHON WEBHOOK SERVER
+==============================
+
+# File: webhook-server.py
+
+from flask import Flask, request, jsonify
+import base64
+import json
+import ssl
+
+app = Flask(__name__)
+
+@app.route("/validate", methods=["POST"])
+def validate():
+    request_info = request.get_json()
+    allowed = True
+    reason = "Allowed by default"
+
+    try:
+        pod = request_info["request"]["object"]
+        containers = pod.get("spec", {}).get("containers", [])
+        for c in containers:
+            sc = c.get("securityContext", {})
+            if sc.get("runAsNonRoot") is False:
+                allowed = False
+                reason = f"Container '{c['name']}' is running as root (runAsNonRoot=false)"
+                break
+    except Exception as e:
+        reason = f"Error processing request: {e}"
+
+    response = {
+        "apiVersion": "admission.k8s.io/v1",
+        "kind": "AdmissionReview",
+        "response": {
+            "uid": request_info["request"]["uid"],
+            "allowed": allowed,
+            "status": {"message": reason},
+        },
+    }
+
+    return jsonify(response)
+
+@app.route("/mutate", methods=["POST"])
+def mutate():
+    review = request.get_json()
+    uid = review["request"]["uid"]
+
+    patch = [
+        {"op": "add", "path": "/metadata/labels/security", "value": "scan-required"}
+    ]
+
+    patch_b64 = base64.b64encode(json.dumps(patch).encode()).decode()
+
+    response = {
+        "apiVersion": "admission.k8s.io/v1",
+        "kind": "AdmissionReview",
+        "response": {
+            "uid": uid,
+            "allowed": True,
+            "patchType": "JSONPatch",
+            "patch": patch_b64,
+        },
+    }
+
+    return jsonify(response)
+
+@app.route("/healthz", methods=["GET"])
+def health():
+    return "ok", 200
+
+if __name__ == "__main__":
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certfile="/tls/tls.crt", keyfile="/tls/tls.key")
+    app.run(host="0.0.0.0", port=8443, ssl_context=context)
+
+
+==============================
+SECTION 3: DOCKERFILE
+==============================
+
+# File: Dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+COPY webhook-server.py /app/
+RUN pip install flask
+CMD ["python", "/app/webhook-server.py"]
+
+
+==============================
+SECTION 4: BUILD & DEPLOY STEPS
+==============================
+
+# Step 1: Build image in Minikube
+eval $(minikube docker-env)
+docker build -t webhook-server:1.0 .
+
+# Step 2: Create TLS cert & secret
+openssl req -x509 -newkey rsa:4096 -keyout tls.key -out tls.crt -days 365 -nodes -subj "/CN=webhook-svc.webhook-demo.svc"
+kubectl create namespace webhook-demo
+kubectl create secret tls webhook-certs --cert=tls.crt --key=tls.key -n webhook-demo
+
+# Step 3: Deploy webhook server
+kubectl apply -f webhook-server-deployment.yaml
+
+# Step 4: Encode CA bundle for webhooks
+cat tls.crt | base64 | tr -d '\n'
+
+==============================
+SECTION 5: DEPLOYMENT & SERVICE
+==============================
+
+# File: webhook-server-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webhook-server
+  namespace: webhook-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webhook-server
+  template:
+    metadata:
+      labels:
+        app: webhook-server
+    spec:
+      containers:
+      - name: webhook
+        image: webhook-server:1.0
+        ports:
+        - containerPort: 8443
+        volumeMounts:
+        - name: webhook-certs
+          mountPath: /tls
+          readOnly: true
+      volumes:
+      - name: webhook-certs
+        secret:
+          secretName: webhook-certs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webhook-svc
+  namespace: webhook-demo
+spec:
+  ports:
+  - port: 443
+    targetPort: 8443
+  selector:
+    app: webhook-server
+
+
+==============================
+SECTION 6: VALIDATING WEBHOOK CONFIGURATION
+==============================
+
+# File: validating-webhook.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: deny-root-pods
+webhooks:
+- name: deny-root-pods.webhook-demo.svc
+  clientConfig:
+    service:
+      name: webhook-svc
+      namespace: webhook-demo
+      path: /validate
+    caBundle: <BASE64_ENCODED_CA_CERT>
+  rules:
+  - apiGroups: [""]
+    apiVersions: ["v1"]
+    resources: ["pods"]
+    operations: ["CREATE"]
+  failurePolicy: Fail
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+
+
+==============================
+SECTION 7: MUTATING WEBHOOK CONFIGURATION
+==============================
+
+# File: mutating-webhook.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: add-security-label
+webhooks:
+- name: add-labels.webhook-demo.svc
+  clientConfig:
+    service:
+      name: webhook-svc
+      namespace: webhook-demo
+      path: /mutate
+    caBundle: <BASE64_ENCODED_CA_CERT>
+  rules:
+  - apiGroups: [""]
+    apiVersions: ["v1"]
+    resources: ["pods"]
+    operations: ["CREATE"]
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+  failurePolicy: Ignore
+
+
+==============================
+SECTION 8: TEST COMMANDS
+==============================
+
+# Validation (deny root)
+kubectl run root-pod --image=nginx --dry-run=client -o yaml > pod.yaml
+# Edit pod.yaml: add runAsNonRoot: false in securityContext
+kubectl apply -f pod.yaml
+# Expect: denied by webhook
+
+# Mutation (add label)
+kubectl run test --image=nginx
+kubectl get pod test -o jsonpath='{.metadata.labels.security}'
+# Expect: scan-required
+
+
+==============================
+SECTION 9: TROUBLESHOOTING QUICK REF
+==============================
+
+| Symptom | Likely Cause | Fix |
+|----------|--------------|-----|
+| x509: certificate signed by unknown authority | CA bundle mismatch | Ensure caBundle matches tls.crt |
+| Webhook never triggers | apiGroups or resources wrong | Use apiGroups: [""] for core resources |
+| Timeout | Webhook slow / low timeoutSeconds | Increase timeoutSeconds |
+| Pod creation blocked | Service path/port mismatch | Ensure /validate and port 8443 are correct |
+| CrashLoopBackOff | Secret missing | Check secret and mount path /tls |
+
+
+==============================
+SECTION 10: BONUS DEBUGGING SCENARIOS
+==============================
+
+Scenario 1: Missing CA Bundle
+-----------------------------
+Symptom:
+  "x509: certificate signed by unknown authority"
+
+Cause:
+  The caBundle field in ValidatingWebhookConfiguration is empty or incorrect.
+
+Fix:
+  Recreate the configuration with:
+    caBundle: $(cat tls.crt | base64 | tr -d '\n')
+
+---
+
+Scenario 2: Incorrect Service Path
+----------------------------------
+Symptom:
+  "failed calling webhook: Post https://webhook-svc.webhook-demo.svc:443/validation: 404 not found"
+
+Cause:
+  clientConfig.service.path is set to /validation, but your app listens on /validate.
+
+Fix:
+  Change:
+    path: /validation
+  → To:
+    path: /validate
+
+---
+
+Scenario 3: Wrong Namespace
+---------------------------
+Symptom:
+  "no endpoints available for service webhook-svc"
+
+Cause:
+  The webhook Service is in namespace "webhook-demo", but the WebhookConfiguration points to another namespace.
+
+Fix:
+  Verify and correct:
+    namespace: webhook-demo
+
+---
+
+Scenario 4: Timeout Issues
+--------------------------
+Symptom:
+  "context deadline exceeded" or delayed admission decisions.
+
+Fix:
+  Add or update:
+    timeoutSeconds: 10
+  Also check webhook pod logs for slowness.
+
+---
+
+Scenario 5: Invalid API Group
+-----------------------------
+Symptom:
+  Webhook never triggers for core resources (Pods, ConfigMaps, Secrets).
+
+Fix:
+  Ensure:
+    apiGroups: [""]
+  not:
+    apiGroups: ["core"]
+
+---
+
+Scenario 6: Testing FailurePolicy Behavior
+------------------------------------------
+Symptom:
+  When webhook is down, Pod creation hangs.
+
+Fix:
+  In WebhookConfiguration, use:
+    failurePolicy: Ignore
+  (for non-critical webhooks like label mutation)
+
+---
+
+✅ Pro Tip for CKS:
+-------------------
+In the exam, you might need to:
+- Inspect `/etc/kubernetes/manifests/kube-apiserver.yaml` for webhook timeouts.
+- Edit or remove invalid webhook configs (`kubectl delete validatingwebhookconfigurations <name>`).
+- Verify the webhook service resolves (`kubectl get svc -A | grep webhook`).
+
+========================================
+END OF FILE
+========================================

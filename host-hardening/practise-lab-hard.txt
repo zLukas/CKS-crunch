@@ -1,0 +1,58 @@
+==============================================
+CKS DEBUG CHALLENGE (HARD)
+TOPIC: FALCO RULE MISCONFIGURATION
+==============================================
+
+Scenario:
+Falco is installed but fails to detect privilege escalation and `/etc` modifications.
+You must fix Falco’s rule configuration and validate alerts.
+
+Goal:
+Ensure Falco correctly logs suspicious container activity.
+
+==============================================
+SECTION A — BROKEN CONFIGURATION
+==============================================
+# File: /etc/falco/falco_rules.local.yaml
+- rule: Write below /etc
+  desc: A container writes to /etc
+  condition: evt.type=open and fd.name startswith /etc and container
+  output: "Container writing to /etc"
+  priority: WARNING
+  # Missing `evt.dir = <` and container.id != host
+
+==============================================
+SECTION B — TASKS
+==============================================
+1️⃣ Fix rule:
+   - rule: Write below /etc
+     desc: Detect container write attempts under /etc
+     condition: evt.type=open and evt.dir=< and fd.name startswith /etc and container and container.id != host
+     output: "Container writing to /etc (user=%user.name container=%container.id)"
+     priority: WARNING
+     tags: [filesystem, container, mitre_t1565]
+
+2️⃣ Reload Falco:
+   sudo systemctl restart falco
+
+3️⃣ Trigger alert:
+   docker run --rm alpine sh -c "echo test > /etc/fake"
+
+4️⃣ Verify Falco log:
+   sudo cat /var/log/falco.log | grep "/etc"
+
+Expected:
+  - Falco detects the write.
+  - Alert recorded in logs with correct rule name.
+
+==============================================
+SECTION C — VERIFICATION
+==============================================
+[ ] Falco rule syntax fixed  
+[ ] Falco service restarted  
+[ ] Alert triggered correctly  
+[ ] Logs show detection message  
+
+==============================================
+END OF HARD DEBUG CHALLENGE
+==============================================

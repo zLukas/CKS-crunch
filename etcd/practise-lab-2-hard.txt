@@ -1,0 +1,79 @@
+==============================================
+CKS DEBUG CHALLENGE (HARD)
+TOPIC: ETCD BACKUP AND RESTORE FAILURE
+==============================================
+
+Scenario:
+After restoring from a snapshot, the control plane does not start properly.
+Pods remain in "Pending" and "CrashLoopBackOff" states.
+You suspect etcd restore paths are incorrect.
+
+Goal:
+Fix and correctly restore etcd data.
+
+==============================================
+SECTION A — BROKEN RESTORE COMMAND
+==============================================
+Admin ran:
+ETCDCTL_API=3 etcdctl snapshot restore /opt/etcd-snapshot.db \
+  --data-dir /var/lib/etcd-restore   # Wrong flag syntax, missing "=" and peer params
+
+Result:
+  kube-apiserver logs show:
+  `connection refused: no available member`
+
+Existing /etc/kubernetes/manifests/etcd.yaml:
+---------------------------------------------
+spec:
+  containers:
+  - name: etcd
+    command:
+    - etcd
+    - --data-dir=/var/lib/etcd          # <--- Old path; restore used /var/lib/etcd-restore
+    - --listen-client-urls=https://127.0.0.1:2379
+    - --advertise-client-urls=https://127.0.0.1:2379
+    volumeMounts:
+    - mountPath: /var/lib/etcd
+      name: etcd-data
+
+==============================================
+SECTION B — TASKS
+==============================================
+1️⃣ Stop kubelet temporarily:
+    sudo systemctl stop kubelet
+
+2️⃣ Remove old etcd data:
+    sudo mv /var/lib/etcd /var/lib/etcd.old
+
+3️⃣ Restore correctly:
+    ETCDCTL_API=3 etcdctl snapshot restore /opt/etcd-snapshot.db \
+      --data-dir=/var/lib/etcd
+
+4️⃣ Ensure correct ownership:
+    sudo chown -R etcd:etcd /var/lib/etcd
+
+5️⃣ Start kubelet:
+    sudo systemctl start kubelet
+
+6️⃣ Verify health:
+    ETCDCTL_API=3 etcdctl endpoint health \
+      --endpoints=https://127.0.0.1:2379 \
+      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+      --cert=/etc/kubernetes/pki/etcd/server.crt \
+      --key=/etc/kubernetes/pki/etcd/server.key
+
+7️⃣ Verify cluster:
+    kubectl get nodes
+    kubectl get pods -A
+
+==============================================
+SECTION C — VERIFICATION
+==============================================
+[ ] Correct data-dir used (/var/lib/etcd)  
+[ ] etcd endpoint healthy  
+[ ] Cluster pods back to Running  
+[ ] Snapshot verified with correct members  
+
+==============================================
+END OF HARD DEBUG CHALLENGE
+==============================================

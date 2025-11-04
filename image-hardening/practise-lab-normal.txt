@@ -1,0 +1,65 @@
+==============================================
+CKS DEBUG CHALLENGE (NORMAL)
+TOPIC: TRIVY SCAN - DETECTING AND FIXING VULNERABLE IMAGE
+==============================================
+
+Scenario:
+A developer built an image `frontend:latest` using `ubuntu:18.04`. Trivy reports several CVEs.
+You must identify and patch vulnerabilities while maintaining app functionality.
+
+Goal:
+Reduce or eliminate HIGH/CRITICAL vulnerabilities.
+
+==============================================
+SECTION A — CURRENT (BROKEN) DOCKERFILE
+==============================================
+# File: Dockerfile
+FROM ubuntu:18.04
+RUN apt-get update && apt-get install -y python3 python3-pip curl
+COPY . /app
+WORKDIR /app
+RUN pip3 install -r requirements.txt
+CMD ["python3", "app.py"]
+
+Issues:
+  - Outdated Ubuntu base image (EOL)
+  - Unpinned dependencies
+  - Cache not cleaned
+  - No non-root user defined
+
+==============================================
+SECTION B — TASKS
+==============================================
+1️⃣ Scan existing image:
+   trivy image frontend:latest
+
+2️⃣ Create a secure Dockerfile:
+   FROM python:3.11-alpine
+   WORKDIR /app
+   COPY . .
+   RUN pip install --no-cache-dir -r requirements.txt
+   RUN adduser -D appuser
+   USER appuser
+   CMD ["python", "app.py"]
+
+3️⃣ Build and re-scan:
+   docker build -t frontend:secure .
+   trivy image frontend:secure --severity HIGH,CRITICAL
+
+4️⃣ Compare before & after reports.
+
+Expected:
+  - Drastic reduction in vulnerabilities.
+  - Trivy report shows “0 HIGH, 0 CRITICAL”.
+
+==============================================
+SECTION C — VERIFICATION
+==============================================
+[ ] Trivy installed and used  
+[ ] Image rebuilt with secure base  
+[ ] Non-root user configured  
+[ ] Final scan shows no severe CVEs  
+
+==============================================
+END OF NORMAL DEBUG CHALLENGE
+==============================================

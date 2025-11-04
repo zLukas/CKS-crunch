@@ -1,0 +1,87 @@
+==============================================
+CKS DEBUG CHALLENGE (VERY HARD)
+TOPIC: ETCD CERTIFICATE AND TLS MISMATCH
+==============================================
+
+Scenario:
+After certificate rotation, etcd fails to start. Kube-apiserver logs:
+  "x509: certificate signed by unknown authority"
+You must fix the cert chain and re-establish secure communication.
+
+Goal:
+Diagnose and fix etcd TLS certificate issues and restore full cluster functionality.
+
+==============================================
+SECTION A — BROKEN CONFIGURATION
+==============================================
+Current /etc/kubernetes/manifests/etcd.yaml:
+--------------------------------------------
+command:
+- etcd
+- --cert-file=/etc/kubernetes/pki/etcd/server.crt
+- --key-file=/etc/kubernetes/pki/etcd/server.key
+- --trusted-ca-file=/etc/kubernetes/pki/etcd/ca.crt
+- --client-cert-auth=true
+- --advertise-client-urls=https://127.0.0.1:2379
+- --listen-client-urls=https://127.0.0.1:2379
+- --listen-peer-urls=https://127.0.0.1:2380
+- --initial-cluster=master=https://127.0.0.1:2380
+# Problem:
+#  - The cert CN does not match the advertised URL (CN=minikube but expects 127.0.0.1)
+#  - apiserver certs use a different CA (kubernetes-ca, not etcd-ca)
+#  - apiserver cannot validate etcd’s cert
+
+==============================================
+SECTION B — TASKS
+==============================================
+1️⃣ Inspect etcd logs:
+    kubectl logs -n kube-system etcd-minikube
+    # Expect x509 CN mismatch or unknown authority errors.
+
+2️⃣ Re-issue proper certs:
+    cd /etc/kubernetes/pki/etcd
+    mv server.crt server.crt.old
+    mv server.key server.key.old
+
+    openssl req -x509 -newkey rsa:4096 -nodes -days 365 \
+      -keyout server.key -out server.crt \
+      -subj "/CN=127.0.0.1" \
+      -addext "subjectAltName = IP:127.0.0.1,IP:10.0.0.1" \
+      -CA ca.crt -CAkey ca.key -CAcreateserial
+
+3️⃣ Restart etcd static pod:
+    sudo touch /etc/kubernetes/manifests/etcd.yaml
+
+4️⃣ Check health:
+    ETCDCTL_API=3 etcdctl endpoint health \
+      --endpoints=https://127.0.0.1:2379 \
+      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+      --cert=/etc/kubernetes/pki/etcd/server.crt \
+      --key=/etc/kubernetes/pki/etcd/server.key
+
+5️⃣ If apiserver still fails:
+    Ensure kube-apiserver manifest references same CA and certs under `/etc/kubernetes/pki/etcd/`.
+
+6️⃣ Validate cluster functionality:
+    kubectl get pods -A
+    kubectl get secrets
+
+==============================================
+SECTION C — VERIFICATION
+==============================================
+[ ] ETCD cert CN/SAN matches 127.0.0.1  
+[ ] apiserver uses correct etcd-ca  
+[ ] ETCD endpoint healthy  
+[ ] Cluster accessible (kubectl works)
+
+==============================================
+SECTION D — EXTRA HARDENING
+==============================================
+- Automate cert rotation using `kubeadm cert renew`
+- Validate etcdctl health from cronjob
+- Limit file permissions on /etc/kubernetes/pki/etcd/* to 600
+- Backup new certs with timestamps
+
+==============================================
+END OF VERY HARD DEBUG CHALLENGE
+==============================================

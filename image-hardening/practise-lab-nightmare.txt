@@ -1,0 +1,75 @@
+==============================================
+CKS DEBUG CHALLENGE (VERY HARD)
+TOPIC: KUBE-BENCH FAILURES & NODE HARDENING
+==============================================
+
+Scenario:
+Security audit reveals your Kubernetes node fails critical kube-bench checks.
+You must bring it into compliance.
+
+Goal:
+Identify failing controls, apply fixes, and re-run kube-bench successfully.
+
+==============================================
+SECTION A — CURRENT OUTPUT (BROKEN)
+==============================================
+Command:
+  sudo kube-bench run --targets node
+
+Excerpt:
+  [FAIL] 4.1.1 Ensure that the kubelet service file permissions are set to 644
+  [FAIL] 4.2.2 Ensure that --anonymous-auth is false
+  [WARN] 4.2.5 Ensure that the --read-only-port is set to 0
+  [FAIL] 4.2.8 Ensure that the --protect-kernel-defaults argument is set to true
+
+==============================================
+SECTION B — ROOT CAUSES
+==============================================
+- Kubelet allows anonymous access (no `--anonymous-auth=false`)
+- Read-only port 10255 enabled
+- Systemd unit file permissions too open
+- Kernel parameters not protected
+
+==============================================
+SECTION C — TASKS
+==============================================
+1️⃣ Check kubelet configuration:
+   sudo cat /var/lib/kubelet/config.yaml
+
+2️⃣ Edit file or flags to include:
+   authentication:
+     anonymous:
+       enabled: false
+   readOnlyPort: 0
+   protectKernelDefaults: true
+
+3️⃣ Apply secure file permissions:
+   sudo chmod 600 /etc/systemd/system/kubelet.service
+   sudo systemctl daemon-reload
+   sudo systemctl restart kubelet
+
+4️⃣ Re-run:
+   sudo kube-bench run --targets node
+
+Expected:
+  - All 4.x tests PASS or WARN only.
+
+==============================================
+SECTION D — VERIFICATION
+==============================================
+[ ] kubelet config hardened  
+[ ] Anonymous auth disabled  
+[ ] readOnlyPort disabled  
+[ ] protectKernelDefaults true  
+[ ] kube-bench passes majority of tests  
+
+==============================================
+SECTION E — HARDENING EXTRAS
+==============================================
+- Enable auditing with `--audit-log-path` in kubelet
+- Run kube-bench regularly in CI/CD pipeline
+- Monitor CIS failures via automation (Falco, Kubescape)
+
+==============================================
+END OF VERY HARD DEBUG CHALLENGE
+==============================================

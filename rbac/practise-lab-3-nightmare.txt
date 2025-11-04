@@ -1,0 +1,99 @@
+==============================================
+CKS DEBUG CHALLENGE (VERY HARD)
+TOPIC: USER ROLE ESCALATION AND DENY POLICY
+==============================================
+
+Scenario:
+A cluster has recently been compromised. A user `devops` somehow gained admin privileges.
+You must audit and lock down RBAC while preserving least privilege access.
+
+Goal:
+Find how `devops` obtained excessive access, revoke it, and apply a least-privilege fix.
+
+==============================================
+SECTION A — CURRENT CONFIGURATION (BROKEN)
+==============================================
+# File: clusterrolebinding-admin.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: admin-global-binding
+subjects:
+- kind: User
+  name: devops
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin              # <-- Too broad
+  apiGroup: rbac.authorization.k8s.io
+
+# File: devops-role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: devops-role
+  namespace: devops
+rules:
+- apiGroups: [""]
+  resources: ["pods", "configmaps"]
+  verbs: ["get", "list"]
+
+# Note:
+# User devops should only have read access in the `devops` namespace,
+# but is currently bound to cluster-admin globally.
+
+==============================================
+SECTION B — TASKS
+==============================================
+1️⃣ Audit current access:
+   kubectl auth can-i '*' '*' --as=devops
+   # Expect "yes" to almost everything (admin-level access)
+
+2️⃣ Delete overprivileged binding:
+   kubectl delete clusterrolebinding admin-global-binding
+
+3️⃣ Create least-privilege binding:
+   apiVersion: rbac.authorization.k8s.io/v1
+   kind: RoleBinding
+   metadata:
+     name: devops-read-only
+     namespace: devops
+   subjects:
+   - kind: User
+     name: devops
+     apiGroup: rbac.authorization.k8s.io
+   roleRef:
+     kind: Role
+     name: devops-role
+     apiGroup: rbac.authorization.k8s.io
+
+4️⃣ Apply new binding and verify:
+   kubectl auth can-i list pods --as=devops -n devops        # Expected: yes
+   kubectl auth can-i delete pods --as=devops -n devops      # Expected: no
+   kubectl auth can-i list pods --as=devops -A               # Expected: no (restricted to namespace)
+
+5️⃣ Harden RBAC further:
+   - Restrict system:authenticated from cluster-admin
+   - Review ClusterRoleBindings for misuse:
+       kubectl get clusterrolebindings -o wide
+
+==============================================
+SECTION C — VERIFICATION
+==============================================
+[ ] admin-global-binding removed  
+[ ] devops restricted to devops namespace  
+[ ] privilege escalation blocked  
+[ ] verified least privilege access  
+
+==============================================
+SECTION D — HARDENING TIPS
+==============================================
+- Regularly audit RBAC:
+     kubectl get clusterrolebindings,rolebindings -A
+- Enable `--authorization-mode=Node,RBAC` in kube-apiserver
+- Use audit logs to track permission misuse
+- Apply `PodSecurity` / `OPA Gatekeeper` to enforce role policies
+
+==============================================
+END OF VERY HARD DEBUG CHALLENGE
+==============================================

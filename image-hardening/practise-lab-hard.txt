@@ -1,0 +1,72 @@
+==============================================
+CKS DEBUG CHALLENGE (HARD)
+TOPIC: CIS DOCKER BENCHMARK FAILURES
+==============================================
+
+Scenario:
+A production host fails multiple CIS Docker benchmark checks. You must analyze results and harden the Docker daemon.
+
+Goal:
+Pass key CIS benchmark checks related to privilege, isolation, and configuration.
+
+==============================================
+SECTION A — CURRENT OUTPUT (BROKEN)
+==============================================
+Command:
+  sudo ./docker-bench-security.sh
+
+Excerpt:
+  [WARN] 2.1  - Ensure network traffic is restricted between containers
+  [WARN] 2.9  - Ensure only trusted users can control Docker daemon
+  [WARN] 5.1  - Ensure AppArmor is enabled
+  [FAIL] 5.20 - Ensure Docker socket file permissions are set to 660 or more restrictive
+
+==============================================
+SECTION B — ROOT CAUSES
+==============================================
+- Docker daemon running with default `--icc=true` (allows inter-container comms)
+- `docker.sock` world-writable (permissions 666)
+- No AppArmor or seccomp profile enforced
+- User not using `userns-remap`
+
+==============================================
+SECTION C — TASKS
+==============================================
+1️⃣ Restrict container communication:
+   Edit `/etc/docker/daemon.json`:
+   {
+     "icc": false,
+     "userns-remap": "default",
+     "no-new-privileges": true
+   }
+
+2️⃣ Fix socket permissions:
+   sudo chmod 660 /var/run/docker.sock
+   sudo chown root:docker /var/run/docker.sock
+
+3️⃣ Enforce security profiles:
+   docker run --security-opt no-new-privileges:true \
+              --security-opt seccomp=default.json \
+              --security-opt apparmor=docker-default nginx
+
+4️⃣ Restart Docker:
+   sudo systemctl restart docker
+
+5️⃣ Re-run benchmark:
+   sudo ./docker-bench-security.sh
+
+Expected:
+  - WARN/FAIL entries reduced or eliminated
+  - Compliance score improved
+
+==============================================
+SECTION D — VERIFICATION
+==============================================
+[ ] daemon.json updated  
+[ ] Docker socket permissions restricted  
+[ ] AppArmor/seccomp applied  
+[ ] Benchmark re-run shows improved compliance  
+
+==============================================
+END OF HARD DEBUG CHALLENGE
+==============================================

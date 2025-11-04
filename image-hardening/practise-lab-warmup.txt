@@ -1,0 +1,65 @@
+==============================================
+CKS PRACTICE: DOCKER IMAGE & NODE HARDENING — GENERAL QUESTIONS (EASY)
+==============================================
+
+Q1 — Scan a Custom Image with Trivy
+-----------------------------------
+Scenario:
+You’ve built a local Docker image `myapp:v1`. You need to check it for CVEs and misconfigurations.
+
+Tasks:
+  1. Install Trivy (if not already):
+       sudo apt install trivy -y
+  2. Scan the image:
+       trivy image myapp:v1
+  3. Identify high or critical vulnerabilities.
+  4. Generate a summary report:
+       trivy image --severity HIGH,CRITICAL --format table -o trivy-report.txt myapp:v1
+  5. Fix vulnerabilities by updating base image or dependencies.
+
+Expected:
+  - Report created.
+  - No HIGH/CRITICAL vulnerabilities remain after fixing.
+
+Q2 — Apply Multi-Stage Build to Reduce Attack Surface
+-----------------------------------------------------
+Scenario:
+A Dockerfile for `goapp` contains unnecessary build tools in the final image.
+
+Tasks:
+  1. Refactor Dockerfile:
+       - Use multi-stage build with `golang:1.22` as builder.
+       - Copy only binary into minimal runtime image (`distroless` or `alpine`).
+  2. Build and verify:
+       docker build -t goapp:secure .
+       docker run goapp:secure whoami
+  3. Compare image size:
+       docker images goapp:*
+
+Expected:
+  - Smaller final image, no compiler or package manager binaries.
+
+Q3 — Harden Node Using CIS Docker Benchmark
+-------------------------------------------
+Scenario:
+You are required to evaluate your Docker daemon’s security compliance.
+
+Tasks:
+  1. Install Docker Bench for Security:
+       git clone https://github.com/docker/docker-bench-security.git
+       cd docker-bench-security
+       sudo ./docker-bench-security.sh
+  2. Record failing checks.
+  3. Apply remediations (examples):
+       - Disable legacy `--icc` networking.
+       - Restrict container privileges (`--no-new-privileges`).
+       - Use `userns-remap` feature.
+  4. Re-run benchmark to confirm improvements.
+
+Expected:
+  - Compliance score improved.
+  - No CRITICAL or WARN-level failures remain.
+
+==============================================
+END OF EASY IMAGE HARDENING PRACTICE QUESTIONS
+==============================================

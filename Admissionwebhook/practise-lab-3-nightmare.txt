@@ -1,0 +1,342 @@
+==============================================
+CKS BOSS CHALLENGE: ADMISSION WEBHOOK + NETWORKPOLICY
+(MINIKUBE)
+==============================================
+
+OVERVIEW
+--------
+This lab simulates a hardened cluster where Admission Webhooks (Mutating + Validating)
+must operate while NetworkPolicies restrict traffic. A single misconfiguration in
+either the webhook or network policy will cause admission to fail, letting insecure
+pods through or causing API errors.
+
+Goal:
+  - Repair both webhooks so:
+      * Mutating webhook auto-adds label "security=scan-required"
+      * Validating webhook denies pods running as root
+  - Ensure the API server can reach the webhook service despite NetworkPolicy
+  - Harden configuration (timeoutSeconds, failurePolicy, correct caBundle, etc.)
+  - Verify behavior with test pods and logs
+
+Cluster assumptions:
+  - Single-node Minikube
+  - Webhook image is built locally as: webhook-server:1.0
+  - The webhook binary listens on /mutate and /validate on TLS port 8443
+  - Namespace for this lab: webhook-boss
+
+==============================================
+SECTION A — BROKEN MANIFESTS (INTENTIONAL BUGS)
+==============================================
+Below are the files that were deployed by a junior admin. They contain many
+mistakes (marked with comments). Fix them.
+
+--- File: webhook-deploy.yaml ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webhook-server
+  namespace: webhook-boss
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webhook-server
+  template:
+    metadata:
+      labels:
+        app: webhook-server
+    spec:
+      containers:
+      - name: webhook
+        image: webhook-server:1.0
+        ports:
+        - containerPort: 8443
+        volumeMounts:
+        - name: certs
+          mountPath: /etc/webhook/certs          # server expects /tls (intentional mismatch)
+      volumes:
+      - name: certs
+        secret:
+          secretName: webhook-cert                # secret name mismatch; elsewhere called webhook-certs
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webhook-svc
+  namespace: webhook-boss
+spec:
+  ports:
+  - port: 443
+    targetPort: 9443   # incorrect targetPort (should be 8443)
+  selector:
+    app: webhook-server
+
+--- File: validating-webhook.yaml ---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: boss-validate
+webhooks:
+- name: deny-root.webhook-boss.svc
+  clientConfig:
+    service:
+      name: webhook-svc
+      namespace: webhook-boss
+      path: /validate
+    caBundle: ""                # MISSING - will cause x509 errors
+  rules:
+  - apiGroups: ["apps"]         # WRONG - pods are core resources
+    apiVersions: ["v1"]
+    resources: ["pods"]
+    operations: ["CREATE"]
+  failurePolicy: Ignore         # Too lenient for validation
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+  timeoutSeconds: 1             # Too low; may cause timeouts
+
+--- File: mutating-webhook.yaml ---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: boss-mutate
+webhooks:
+- name: add-label.webhook-boss.svc
+  clientConfig:
+    service:
+      name: webhook-svc
+      namespace: webhook-boss
+      path: /mutation               # WRONG path; server listens on /mutate
+    caBundle: ""                   # MISSING caBundle
+  rules:
+  - apiGroups: ["core-old"]       # WRONG apiGroup
+    apiVersions: ["v1"]
+    resources: ["pods"]
+    operations: ["CREATE"]
+  failurePolicy: Ignore
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+
+--- File: networkpolicy.yaml ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all-ingress
+  namespace: webhook-boss
+spec:
+  podSelector:
+    matchLabels:
+      app: webhook-server
+  policyTypes:
+  - Ingress
+  ingress: []   # Deny all ingress to webhook pods (this blocks the API server from calling webhooks)
+
+# NOTES:
+# There may be other misleading or minor issues when you inspect live resources.
+
+==============================================
+SECTION B — TASKS (What you must do)
+==============================================
+Task 1 — Fix the manifests (minimum fixes listed)
+  - Ensure the Deployment mounts TLS at the correct path the server expects (/tls)
+  - Ensure the Secret name in Deployment matches the Secret you'll create (use webhook-certs)
+  - Fix Service targetPort to 8443
+  - Generate TLS cert/key with CN=webhook-svc.webhook-boss.svc, create TLS Secret named webhook-certs
+  - Populate caBundle in both webhook configs with base64(tls.crt)
+  - Fix apiGroups to [""] for core resources in both webhooks
+  - Fix mutating webhook path to /mutate
+  - Set validating failurePolicy to Fail
+  - Increase timeoutSeconds to 10 for both webhooks (or at least validating)
+  - Adjust NetworkPolicy so the API server can reach webhooks:
+      * Create a NetworkPolicy that ALLOWS ingress to webhook pods from namespace "kube-system" (where kube-apiserver static pod typically runs)
+      * Alternatively, allow ingress from pods with label 'component=kube-apiserver' OR allow from the API server's namespace
+  - Reapply corrected manifests
+
+Task 2 — Generate cert and secret (commands to run)
+  # create namespace
+  kubectl create namespace webhook-boss
+
+  # generate self-signed cert (CN must match service DNS)
+  openssl req -x509 -newkey rsa:4096 -keyout tls.key -out tls.crt -days 365 -nodes -subj "/CN=webhook-svc.webhook-boss.svc"
+
+  # create secret
+  kubectl create secret tls webhook-certs --cert=tls.crt --key=tls.key -n webhook-boss
+
+  # obtain base64 CA bundle
+  cat tls.crt | base64 | tr -d '\n'
+  # Use the above output to replace caBundle: "<BASE64_STRING>" in validating-webhook.yaml and mutating-webhook.yaml
+
+Task 3 — Reapply deployments & webhooks
+  kubectl apply -f webhook-deploy.yaml
+  kubectl apply -f service.yaml        # if separated; otherwise webhook-deploy includes Service
+  kubectl apply -f networkpolicy.yaml  # but only after adjusting to permit API server
+  kubectl apply -f validating-webhook.yaml
+  kubectl apply -f mutating-webhook.yaml
+
+Task 4 — Verify behavior
+  1) Mutation test (should add label)
+     kubectl run mutate-test --image=nginx -n webhook-boss --restart=Never
+     kubectl get pod mutate-test -n webhook-boss -o jsonpath='{.metadata.labels.security}'
+     # Expected: scan-required
+
+  2) Validation test (deny root)
+     kubectl run root-pod --image=nginx -n webhook-boss --overrides='{"spec":{"securityContext":{"runAsNonRoot":false}}}' --restart=Never
+     # Expected: Denied by webhook with message about running as root
+
+  3) Positive test (allowed)
+     kubectl run user-pod --image=nginx -n webhook-boss --overrides='{"spec":{"securityContext":{"runAsNonRoot":true}}}' --restart=Never
+     # Expected: Pod is created successfully
+
+  4) Confirm API server can reach the webhook:
+     # If you have access to minikube node, test from a pod in kube-system namespace (example):
+     kubectl run -n kube-system curl-test --image=radial/busyboxplus:curl --rm -it --restart=Never -- sh -c "curl -vk https://webhook-svc.webhook-boss.svc:443/healthz --cacert /etc/ssl/certs/ca-certificates.crt"
+     # Alternatively check apiserver logs for x509 or timeout errors:
+     kubectl logs -n kube-system -l component=kube-apiserver
+
+  5) Inspect webhook pod logs:
+     kubectl logs -n webhook-boss deploy/webhook-server
+
+Task 5 — Harden & Extras (optional but recommended)
+  - Set validating-webhook failurePolicy: Fail (already required)
+  - Set admissionReviewVersions to ["v1","v1beta1"] if you want backward compatibility
+  - Add timeoutSeconds: 10 to both webhooks
+  - Add readinessProbe to webhook Deployment (HTTP /healthz no-TLS) or curl via TLS
+  - Add label to webhook pods: allow-ingress-from: kube-system to match NetworkPolicy
+
+==============================================
+SECTION C — HINTS & TROUBLESHOOTING
+==============================================
+Common symptoms you will see and how to interpret:
+  - "x509: certificate signed by unknown authority" → caBundle missing or wrong CN
+  - "context deadline exceeded" → timeoutSeconds too low or webhook pod slow/crashed
+  - "no endpoints available for service" → Service/Deployment selector mismatch or wrong namespace
+  - Webhook not triggered → apiGroups wrong (use [""] for pods), wrong resource, or path mismatch
+  - API server errors or hangs during pod creation → NetworkPolicy blocking apiserver traffic to webhook pod
+
+NetworkPolicy specifics:
+  - NetworkPolicy only affects Pod-to-Pod traffic. The API server in Minikube runs as a static pod in kube-system; its requests originate from that pod. Allow ingress from that namespace or pod labels.
+  - Example allow rule: permit ingress to webhook pods from namespaceSelector matchLabels: {kubernetes.io/metadata.name: kube-system}
+
+Example permissive NetworkPolicy (fix):
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-apiserver-ingress
+  namespace: webhook-boss
+spec:
+  podSelector:
+    matchLabels:
+      app: webhook-server
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: TCP
+      port: 443
+
+==============================================
+SECTION D — CHECKLIST (mark when done)
+==============================================
+[ ] Deployment mounts TLS at /tls and secretName is webhook-certs
+[ ] Service targetPort set to 8443 and port 443 for cluster access
+[ ] TLS secret created with CN=webhook-svc.webhook-boss.svc
+[ ] caBundle inserted in both webhook configurations (base64 of tls.crt)
+[ ] apiGroups set to [""] for both webhooks
+[ ] mutating webhook path is /mutate ; validating path is /validate
+[ ] validating failurePolicy set to Fail
+[ ] timeoutSeconds set to 10
+[ ] NetworkPolicy allows ingress from kube-system to webhook pods
+[ ] Mutating test adds label "security=scan-required"
+[ ] Validating test denies runAsNonRoot=false pods
+[ ] Logs show both /mutate and /validate requests handled
+
+==============================================
+SECTION E — EXAMPLE FIXED SNIPPETS (for convenience)
+==============================================
+# Service (fixed)
+apiVersion: v1
+kind: Service
+metadata:
+  name: webhook-svc
+  namespace: webhook-boss
+spec:
+  ports:
+  - port: 443
+    targetPort: 8443
+  selector:
+    app: webhook-server
+
+# Mutating webhook (fixed fields)
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: boss-mutate
+webhooks:
+- name: add-label.webhook-boss.svc
+  clientConfig:
+    service:
+      name: webhook-svc
+      namespace: webhook-boss
+      path: /mutate
+    caBundle: <BASE64_ENCODED_CA_CERT>
+  rules:
+  - apiGroups: [""]
+    apiVersions: ["v1"]
+    resources: ["pods"]
+    operations: ["CREATE"]
+  failurePolicy: Ignore
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+  timeoutSeconds: 10
+
+# Validating webhook (fixed fields)
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: boss-validate
+webhooks:
+- name: deny-root.webhook-boss.svc
+  clientConfig:
+    service:
+      name: webhook-svc
+      namespace: webhook-boss
+      path: /validate
+    caBundle: <BASE64_ENCODED_CA_CERT>
+  rules:
+  - apiGroups: [""]
+    apiVersions: ["v1"]
+    resources: ["pods"]
+    operations: ["CREATE"]
+  failurePolicy: Fail
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+  timeoutSeconds: 10
+
+# NetworkPolicy (allow API server from kube-system)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-apiserver-ingress
+  namespace: webhook-boss
+spec:
+  podSelector:
+    matchLabels:
+      app: webhook-server
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: TCP
+      port: 443
+
+==============================================
+END OF CHALLENGE
+==============================================

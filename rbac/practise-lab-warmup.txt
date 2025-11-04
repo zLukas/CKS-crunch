@@ -1,0 +1,58 @@
+==============================================
+CKS PRACTICE: USER / SERVICEACCOUNT RBAC — GENERAL QUESTIONS (EASY)
+==============================================
+
+Q1 — Create a Namespace and Restrictive Role
+--------------------------------------------
+Scenario:
+A developer needs read-only access to ConfigMaps and Pods in a specific namespace `devspace`.
+
+Tasks:
+  1. Create a namespace called devspace.
+  2. Create a Role `read-dev` in that namespace with permissions:
+       - apiGroups: [""]
+       - resources: ["pods", "configmaps"]
+       - verbs: ["get", "list"]
+  3. Create a RoleBinding `dev-read-bind` to bind this role to a user `devuser`.
+  4. Verify:
+       kubectl auth can-i list pods --as=devuser -n devspace
+     Expected: yes
+
+Q2 — Grant ServiceAccount Access to a Specific Resource
+-------------------------------------------------------
+Scenario:
+A ServiceAccount `deploy-bot` in `ci` namespace needs to manage Deployments but nothing else.
+
+Tasks:
+  1. Create namespace `ci`.
+  2. Create ServiceAccount `deploy-bot` in `ci`.
+  3. Create a Role `deployment-manager` with:
+       - apiGroups: ["apps"]
+       - resources: ["deployments"]
+       - verbs: ["create", "update", "get", "list"]
+  4. Bind Role to ServiceAccount.
+  5. Verify:
+       kubectl auth can-i create deployments --as=system:serviceaccount:ci:deploy-bot -n ci
+     Expected: yes
+
+Q3 — Use ClusterRole to Grant Access Cluster-Wide
+-------------------------------------------------
+Scenario:
+A monitoring service running under ServiceAccount `metrics-reader` in `monitoring` namespace
+needs to read all pods in all namespaces.
+
+Tasks:
+  1. Create namespace `monitoring`.
+  2. Create ServiceAccount `metrics-reader`.
+  3. Create a ClusterRole `read-pods-cluster` with:
+       - apiGroups: [""]
+       - resources: ["pods"]
+       - verbs: ["get", "list"]
+  4. Bind using a ClusterRoleBinding `read-pods-global`.
+  5. Verify:
+       kubectl auth can-i list pods --as=system:serviceaccount:monitoring:metrics-reader -A
+     Expected: yes
+
+==============================================
+END OF EASY RBAC PRACTICE QUESTIONS
+==============================================

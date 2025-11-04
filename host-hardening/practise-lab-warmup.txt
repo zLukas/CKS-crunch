@@ -1,0 +1,116 @@
+==============================================
+CKS PRACTICE: HOST HARDENING — GENERAL QUESTIONS (EASY)
+==============================================
+
+Q1 — Enable and Verify AppArmor
+-------------------------------
+Scenario:
+Your cluster requires all nodes to enforce AppArmor profiles on containers.
+
+Tasks:
+  1. Verify AppArmor is active:
+       sudo apparmor_status
+  2. If not loaded, enable it:
+       sudo systemctl enable apparmor && sudo systemctl start apparmor
+  3. Check profile for Docker:
+       sudo cat /etc/apparmor.d/docker
+  4. Run a test container:
+       docker run --rm --security-opt apparmor=docker-default alpine cat /etc/hostname
+  5. Verify AppArmor events appear in `dmesg`.
+
+Expected:
+  - AppArmor status: `profiles are loaded`.
+  - Container restricted to AppArmor profile.
+
+-----------------------------------------------------
+
+Q2 — Create and Apply a Custom AppArmor Profile
+-----------------------------------------------
+Scenario:
+You need a custom profile for a container that should not write to `/etc`.
+
+Tasks:
+  1. Create `/etc/apparmor.d/container-deny-write`:
+       #include <tunables/global>
+       profile container-deny-write flags=(attach_disconnected,mediate_deleted) {
+         #include <abstractions/base>
+         file,
+         deny /etc/** w,
+       }
+  2. Load profile:
+       sudo apparmor_parser -r /etc/apparmor.d/container-deny-write
+  3. Run container:
+       docker run --rm --security-opt apparmor=container-deny-write alpine sh -c "echo test > /etc/test"
+  4. Observe denial in logs.
+
+Expected:
+  - Write attempt denied.
+  - Audit log contains AppArmor alert.
+
+-----------------------------------------------------
+
+Q3 — Install and Use Falco for Runtime Threat Detection
+-------------------------------------------------------
+Scenario:
+You need to detect suspicious container activity (e.g., writing to /etc).
+
+Tasks:
+  1. Install Falco:
+       curl -s https://falco.org/install.sh | sudo bash
+  2. Verify it’s running:
+       sudo systemctl status falco
+  3. Trigger an alert:
+       docker run --rm alpine sh -c "touch /etc/passwd"
+  4. Check Falco alerts:
+       sudo cat /var/log/falco.log | grep "Write below /etc"
+
+Expected:
+  - Falco detects the action.
+  - Alert visible in logs.
+
+-----------------------------------------------------
+
+Q4 — Enforce gVisor Runtime Isolation
+-------------------------------------
+Scenario:
+You must ensure that pods run using the gVisor (runsc) runtime for better syscall isolation.
+
+Tasks:
+  1. Install gVisor:
+       sudo apt install -y gvisor
+  2. Configure Docker:
+       sudo mkdir -p /etc/docker
+       echo '{ "runtimes": { "runsc": { "path": "/usr/local/bin/runsc" } } }' | sudo tee /etc/docker/daemon.json
+  3. Restart Docker:
+       sudo systemctl restart docker
+  4. Run container with gVisor:
+       docker run --runtime=runsc alpine uname -a
+  5. Verify:
+       docker info | grep Runtimes
+
+Expected:
+  - Output shows `runsc` runtime available and functional.
+
+-----------------------------------------------------
+
+Q5 — Harden SSH and System Access on Cluster Nodes
+--------------------------------------------------
+Scenario:
+You are auditing node access policies.
+
+Tasks:
+  1. Disable root SSH login:
+       sudo sed -i 's/^PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+       sudo systemctl restart sshd
+  2. Configure fail2ban or SSH rate limiting.
+  3. Remove unused packages (`nmap`, `telnet`, etc.)
+  4. Verify minimal listening services:
+       ss -tuln
+
+Expected:
+  - Root SSH login disabled.
+  - Only essential services exposed.
+
+==============================================
+END OF EASY HOST HARDENING PRACTICE QUESTIONS
+==============================================

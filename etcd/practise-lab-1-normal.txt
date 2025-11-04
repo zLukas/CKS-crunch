@@ -1,0 +1,74 @@
+==============================================
+CKS DEBUG CHALLENGE (NORMAL)
+TOPIC: ETCD ENCRYPTION MISCONFIGURATION
+==============================================
+
+Scenario:
+A junior admin attempted to enable etcd encryption on your Minikube control plane.
+However, secrets are still being stored in plain text. Investigate and fix it.
+
+Goal:
+Enable encryption at rest for Kubernetes Secrets using AES256 CBC.
+
+==============================================
+SECTION A — CURRENT (BROKEN) CONFIGURATION
+==============================================
+File: /etc/kubernetes/encryption-config.yaml
+--------------------------------------------
+apiVersion: apiserver.config.k8s.io/v1
+kind: EncryptionConfiguration
+resources:
+  - resources:
+      - secrets
+    providers:
+      - identity: {}
+      - aescbc:
+          keys:
+            - name: key1
+              secret: MISSING_BASE64_KEY   # <--- Incorrect placeholder
+# Problem: "aescbc" provider must be listed before "identity" for encryption to take effect
+
+File: /etc/kubernetes/manifests/kube-apiserver.yaml
+----------------------------------------------------
+- --encryption-provider-config=/etc/kubernetes/encryption.yaml   # <--- Wrong file path
+# The encryption config path points to a non-existent file
+
+==============================================
+SECTION B — TASKS
+==============================================
+1️⃣ Generate a valid key:
+   head -c 32 /dev/urandom | base64
+
+2️⃣ Update /etc/kubernetes/encryption-config.yaml:
+   - Put the base64 key under `secret:`
+   - Move "aescbc" above "identity"
+   - Save and close.
+
+3️⃣ Fix kube-apiserver manifest:
+   - Ensure argument reads:
+       --encryption-provider-config=/etc/kubernetes/encryption-config.yaml
+
+4️⃣ Wait for kube-apiserver to restart (Minikube auto-handles).
+
+5️⃣ Verify encryption:
+   kubectl create secret generic normal-test --from-literal=pass=test123
+   sudo ETCDCTL_API=3 etcdctl get /registry/secrets/default/normal-test \
+        --endpoints=https://127.0.0.1:2379 \
+        --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+        --cert=/etc/kubernetes/pki/etcd/server.crt \
+        --key=/etc/kubernetes/pki/etcd/server.key | hexdump -C
+
+Expected:
+  Data blob should be unreadable binary (encrypted).
+
+==============================================
+SECTION C — VERIFICATION
+==============================================
+[ ] Encryption provider file fixed  
+[ ] Key base64 valid  
+[ ] kube-apiserver manifest updated  
+[ ] Secret stored encrypted in etcd
+
+==============================================
+END OF NORMAL DEBUG CHALLENGE
+==============================================

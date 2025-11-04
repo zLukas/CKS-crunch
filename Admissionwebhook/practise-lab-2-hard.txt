@@ -1,0 +1,241 @@
+========================================
+CKS PRACTICE LAB: MUTATING + VALIDATING ADMISSION WEBHOOKS
+========================================
+
+Scenario:
+---------
+Your organization wants to improve pod security and compliance automation.
+
+Requirements:
+  1. **All pods must have a label "security=scan-required" automatically added** on creation.
+  2. **Pods running as root must be denied** admission by a Validating Webhook.
+
+You have been given partial YAML files, but both webhooks are malfunctioning.
+
+Your task:
+  - Debug and fix both webhooks.
+  - Verify correct mutation and validation behavior in Minikube.
+
+Cluster:
+  - Namespace: "webhook-double"
+  - Image already built locally: webhook-server:1.0
+  - Python app listens on:
+      - `/mutate` for mutation
+      - `/validate` for validation
+  - TLS certificate and key must be generated manually.
+
+========================================
+SECTION 1: PROVIDED BROKEN MANIFESTS
+========================================
+
+File 1: webhook-server-deploy.yaml
+----------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webhook-server
+  namespace: webhook-double
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webhook-server
+  template:
+    metadata:
+      labels:
+        app: webhook-server
+    spec:
+      containers:
+      - name: webhook
+        image: webhook-server:1.0
+        ports:
+        - containerPort: 8443
+        volumeMounts:
+        - name: certs
+          mountPath: /tls
+      volumes:
+      - name: certs
+        secret:
+          secretName: webhook-certs
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webhook-svc
+  namespace: webhook-double
+spec:
+  ports:
+  - port: 443
+    targetPort: 8443
+  selector:
+    app: webhook-server
+
+
+File 2: mutating-webhook.yaml
+-----------------------------
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: add-labels
+webhooks:
+- name: add-labels.webhook-double.svc
+  clientConfig:
+    service:
+      name: webhook-svc
+      namespace: webhook-lab
+      path: /mutation
+    caBundle: ""
+  rules:
+  - apiGroups: ["core"]
+    apiVersions: ["v1"]
+    resources: ["pods"]
+    operations: ["CREATE"]
+  failurePolicy: Ignore
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+
+
+File 3: validating-webhook.yaml
+-------------------------------
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: deny-root-pods
+webhooks:
+- name: deny-root-pods.webhook-double.svc
+  clientConfig:
+    service:
+      name: webhook-svc
+      namespace: webhook-double
+      path: /validate
+    caBundle: ""
+  rules:
+  - apiGroups: ["apps"]
+    apiVersions: ["v1"]
+    resources: ["pods"]
+    operations: ["CREATE"]
+  failurePolicy: Ignore
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+
+
+========================================
+SECTION 2: YOUR TASKS
+========================================
+
+Task 1: Fix the Issues
+----------------------
+There are *at least six* configuration problems to identify and fix.
+
+✅ Fixes should include:
+  - Correct namespace references (use webhook-double)
+  - Correct apiGroups for core resources → [""] not ["core"] or ["apps"]
+  - Correct webhook paths:
+      - Mutating → /mutate
+      - Validating → /validate
+  - Generate and use a valid TLS certificate + key
+  - Create a Kubernetes TLS Secret named "webhook-certs"
+  - Base64 encode the CA cert into both webhook configurations
+  - Set `failurePolicy: Fail` for the Validating webhook
+  - Verify Service port and targetPort match (443 → 8443)
+
+
+Task 2: Generate Certificates
+-----------------------------
+Generate self-signed cert and create the secret:
+
+openssl req -x509 -newkey rsa:4096 -keyout tls.key -out tls.crt -days 365 -nodes -subj "/CN=webhook-svc.webhook-double.svc"
+kubectl create namespace webhook-double
+kubectl create secret tls webhook-certs --cert=tls.crt --key=tls.key -n webhook-double
+
+Extract base64 CA:
+cat tls.crt | base64 | tr -d '\n'
+
+
+Task 3: Redeploy and Test
+-------------------------
+Reapply all manifests after fixes.
+
+Then test mutation and validation:
+
+1. Mutation test:
+   kubectl run mutate-test --image=nginx -n webhook-double
+   kubectl get pod mutate-test -n webhook-double -o jsonpath='{.metadata.labels.security}'
+   → Expected: "scan-required"
+
+2. Validation test:
+   kubectl run root-pod --image=nginx -n webhook-double --overrides='{"spec":{"securityContext":{"runAsNonRoot":false}}}'
+   → Expected: Denied with message "running as root"
+
+3. Positive test:
+   kubectl run user-pod --image=nginx -n webhook-double --overrides='{"spec":{"securityContext":{"runAsNonRoot":true}}}'
+   → Expected: Allowed
+
+
+Task 4: Validate Behavior
+-------------------------
+✅ Mutating webhook should run first (adds the label).  
+✅ Validating webhook should deny root pods.  
+✅ Webhook logs should confirm both endpoints were called.
+
+View logs:
+kubectl logs -n webhook-double deploy/webhook-server
+
+
+========================================
+SECTION 3: VALIDATION CHECKLIST
+========================================
+
+| Check | Expected |
+|--------|-----------|
+| TLS Secret mounted correctly | Yes |
+| caBundle set and valid | Yes |
+| apiGroups set to [""] | Yes |
+| Mutating path /mutate | Yes |
+| Validating path /validate | Yes |
+| failurePolicy for validation | Fail |
+| Webhook triggered on pod creation | Yes |
+| Pods with runAsNonRoot=false denied | Yes |
+| Pods get label "security=scan-required" | Yes |
+
+========================================
+SECTION 4: BONUS TROUBLESHOOTING TIPS
+========================================
+
+🧩 Common Failures:
+- ❌ Webhook never triggers → wrong apiGroups or namespace
+- ❌ "x509: certificate signed by unknown authority" → missing caBundle
+- ❌ "context deadline exceeded" → timeout too low
+- ❌ "connection refused" → service port mismatch or pod crash
+
+💡 Quick Fix Commands:
+- Delete old configs:
+    kubectl delete validatingwebhookconfigurations deny-root-pods
+    kubectl delete mutatingwebhookconfigurations add-labels
+- Reapply fixed versions
+- Inspect:
+    kubectl get validatingwebhookconfigurations -o yaml
+    kubectl get mutatingwebhookconfigurations -o yaml
+
+========================================
+SECTION 5: EXPECTED BEHAVIOR DEMO
+========================================
+
+When everything is correct:
+
+kubectl run root-pod --image=nginx --overrides='{"spec":{"securityContext":{"runAsNonRoot":false}}}' -n webhook-double
+# Output:
+# Error from server: admission webhook "deny-root-pods.webhook-double.svc" denied the request: Container is running as root.
+
+kubectl run test-pod --image=nginx -n webhook-double
+kubectl get pod test-pod -o jsonpath='{.metadata.labels.security}'
+# Output:
+# scan-required
+
+kubectl logs -n webhook-double deploy/webhook-server
+# Should show both /mutate and /validate requests handled successfully.
+
+========================================
+END OF LAB
+========================================

@@ -1,0 +1,145 @@
+========================================
+SECTION 11: BONUS CKS EXAM-STYLE CHALLENGE
+========================================
+
+Scenario:
+---------
+A new Validating Admission Webhook was deployed to prevent pods that run as root.  
+However, developers report that **Pods are still being created successfully** even when they should be denied.  
+
+You are asked to:
+  - Identify and fix all misconfigurations.
+  - Verify the webhook is enforcing the policy correctly.
+
+Your cluster:
+  - Minikube single-node cluster.
+  - Namespace: admission-lab
+  - A webhook image has already been built and available locally as `webhook-server:1.0`.
+
+Resources provided (all have issues!):
+
+File 1: webhook-deploy.yaml
+---------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webhook-deploy
+  namespace: admission-lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webhook-server
+  template:
+    metadata:
+      labels:
+        app: webhook-server
+    spec:
+      containers:
+      - name: webhook
+        image: webhook-server:1.0
+        ports:
+        - containerPort: 8443
+        volumeMounts:
+        - name: tls
+          mountPath: /etc/webhook/certs
+      volumes:
+      - name: tls
+        secret:
+          secretName: webhook-cert
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webhook-svc
+  namespace: admission-lab
+spec:
+  ports:
+  - port: 443
+    targetPort: 8443
+  selector:
+    app: webhook-server
+
+
+File 2: validating-webhook.yaml
+-------------------------------
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: deny-root-pods
+webhooks:
+- name: deny-root-pods.webhook-lab.svc
+  clientConfig:
+    service:
+      name: webhook-svc
+      namespace: webhook-lab
+      path: /validate
+    caBundle: ""
+  rules:
+  - apiGroups: ["core"]
+    apiVersions: ["v1"]
+    resources: ["pods"]
+    operations: ["CREATE"]
+  failurePolicy: Ignore
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+
+
+Task 1: Identify and Fix
+------------------------
+✅ Fix all issues in the above manifests.
+There are *at least 5 distinct misconfigurations* to correct, including:
+  - Wrong namespace
+  - Wrong apiGroups
+  - Missing CA bundle
+  - Inconsistent secret name
+  - Risky failurePolicy
+  - (bonus) path or volume mount errors
+
+
+Task 2: Validate and Test
+-------------------------
+After fixing and redeploying:
+
+1. Create a Pod with runAsNonRoot=false:
+   kubectl run root-pod --image=nginx --overrides='{"spec":{"securityContext":{"runAsNonRoot":false}}}'
+   → Should be **denied** with message "running as root".
+
+2. Create a Pod with runAsNonRoot=true:
+   kubectl run user-pod --image=nginx --overrides='{"spec":{"securityContext":{"runAsNonRoot":true}}}'
+   → Should be **allowed**.
+
+3. Inspect the logs:
+   kubectl logs -n admission-lab deploy/webhook-deploy
+
+Expected:
+  - The first Pod is rejected.
+  - The second Pod is admitted successfully.
+
+
+Task 3: Optional Enhancements
+-----------------------------
+- Set failurePolicy to **Fail** to enforce stricter admission control.
+- Add timeoutSeconds: 10 to prevent API timeout errors.
+- Verify the webhook service has valid TLS using:
+    openssl s_client -connect $(minikube ip):$(kubectl get svc webhook-svc -n admission-lab -o jsonpath='{.spec.ports[0].port}') -showcerts
+
+
+Task 4: Verification Checklist
+------------------------------
+✅ Namespace matches  
+✅ Secret name correct  
+✅ caBundle base64 encoded from valid cert  
+✅ apiGroups: [""] for core resources  
+✅ failurePolicy: Fail  
+✅ Webhook responds to /validate  
+✅ TLS mounted correctly to /etc/webhook/certs  
+✅ Test pods behave as expected  
+
+If everything passes — congratulations 🎯
+You’ve just solved a **realistic CKS Admission Webhook troubleshooting exam problem**.
+
+========================================
+END OF BONUS LAB
+========================================

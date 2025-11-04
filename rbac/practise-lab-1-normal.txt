@@ -1,0 +1,70 @@
+==============================================
+CKS DEBUG CHALLENGE (NORMAL)
+TOPIC: SERVICEACCOUNT MISSING PERMISSIONS
+==============================================
+
+Scenario:
+The CI pipeline ServiceAccount `builder` cannot create pods in the `ci` namespace.
+The admin insists RBAC was configured properly. Investigate and fix.
+
+Goal:
+Allow `builder` ServiceAccount to create pods in the `ci` namespace without overprivileging.
+
+==============================================
+SECTION A — CURRENT CONFIGURATION (BROKEN)
+==============================================
+# File: builder-role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: build-role
+  namespace: ci
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]       # Missing "create"
+
+# File: builder-rolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: build-bind
+  namespace: ci
+subjects:
+- kind: ServiceAccount
+  name: builder
+  namespace: default           # WRONG namespace
+roleRef:
+  kind: Role
+  name: build-role
+  apiGroup: rbac.authorization.k8s.io
+
+==============================================
+SECTION B — TASKS
+==============================================
+1️⃣ Inspect what the ServiceAccount can currently do:
+   kubectl auth can-i create pods --as=system:serviceaccount:ci:builder -n ci
+
+2️⃣ Fix Role to include required verb:
+   verbs: ["get", "list", "create"]
+
+3️⃣ Fix RoleBinding:
+   - Ensure subject.namespace is `ci`, not `default`
+
+4️⃣ Reapply fixed manifests and re-test:
+   kubectl auth can-i create pods --as=system:serviceaccount:ci:builder -n ci
+
+5️⃣ Validate by running:
+   kubectl run testpod --image=nginx --as=system:serviceaccount:ci:builder -n ci
+   Expected: pod created successfully.
+
+==============================================
+SECTION C — VERIFICATION
+==============================================
+[ ] Role includes create verb  
+[ ] RoleBinding references correct namespace  
+[ ] ServiceAccount can create pods  
+
+==============================================
+END OF NORMAL DEBUG CHALLENGE
+==============================================

@@ -1,0 +1,70 @@
+==============================================
+CKS DEBUG CHALLENGE (HARD)
+TOPIC: CLUSTERROLE MISCONFIGURATION
+==============================================
+
+Scenario:
+A monitoring ServiceAccount `prom-reader` in the `monitoring` namespace
+should list all pods across namespaces but currently gets "Forbidden".
+
+Goal:
+Fix the ClusterRole or Binding so that `prom-reader` can list all pods cluster-wide.
+
+==============================================
+SECTION A — CURRENT CONFIGURATION (BROKEN)
+==============================================
+# File: clusterrole.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: read-pods-global
+rules:
+- apiGroups: ["apps"]             # WRONG — pods are in core API group
+  resources: ["pods"]
+  verbs: ["get", "list"]
+
+# File: clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: read-pods-global-binding
+subjects:
+- kind: ServiceAccount
+  name: prom-reader
+  namespace: default              # WRONG namespace
+roleRef:
+  kind: Role                      # Should be ClusterRole
+  name: read-pods-global
+  apiGroup: rbac.authorization.k8s.io
+
+==============================================
+SECTION B — TASKS
+==============================================
+1️⃣ Fix ClusterRole:
+   - apiGroups: [""]
+   - Keep resources: ["pods"]
+   - verbs: ["get", "list"]
+
+2️⃣ Fix ClusterRoleBinding:
+   - roleRef.kind: ClusterRole
+   - subject.namespace: monitoring
+
+3️⃣ Apply fixes:
+   kubectl apply -f clusterrole.yaml
+   kubectl apply -f clusterrolebinding.yaml
+
+4️⃣ Verify:
+   kubectl auth can-i list pods --as=system:serviceaccount:monitoring:prom-reader -A
+   Expected: yes
+
+==============================================
+SECTION C — VERIFICATION
+==============================================
+[ ] apiGroups corrected  
+[ ] ClusterRoleBinding references correct SA namespace  
+[ ] Kind set to ClusterRole  
+[ ] Access works across all namespaces  
+
+==============================================
+END OF HARD DEBUG CHALLENGE
+==============================================

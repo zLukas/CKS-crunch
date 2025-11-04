@@ -1,0 +1,84 @@
+==============================================
+CKS DEBUG CHALLENGE (VERY HARD)
+TOPIC: HOST ISOLATION & gVISOR + RUNTIME SECURE CONFIGURATION
+==============================================
+
+Scenario:
+Security review found containers running with full host privileges and no syscall sandboxing.
+You must enforce gVisor as the default runtime and restrict privileged containers.
+
+Goal:
+Harden runtime configuration across cluster nodes.
+
+==============================================
+SECTION A — BROKEN CONFIGURATION
+==============================================
+# File: /etc/docker/daemon.json
+{
+  "runtimes": {},
+  "default-runtime": "runc"
+}
+
+# File: /etc/containerd/config.toml (fragment)
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+  runtime_type = "io.containerd.runc.v2"
+
+==============================================
+SECTION B — TASKS
+==============================================
+1️⃣ Install gVisor:
+   sudo apt-get install -y gvisor
+
+2️⃣ Configure Docker for gVisor:
+   sudo mkdir -p /etc/docker
+   cat <<EOF | sudo tee /etc/docker/daemon.json
+   {
+     "runtimes": {
+       "runsc": {
+         "path": "/usr/local/bin/runsc"
+       }
+     },
+     "default-runtime": "runsc"
+   }
+   EOF
+
+3️⃣ Restart Docker:
+   sudo systemctl restart docker
+
+4️⃣ For containerd:
+   sudo ctr version
+   sudo sed -i '/runc.v2/s/runc.v2/runsc.v1/' /etc/containerd/config.toml
+   sudo systemctl restart containerd
+
+5️⃣ Test runtime isolation:
+   docker run --rm alpine uname -a
+   docker run --runtime=runsc alpine dmesg | tail -n 5
+
+6️⃣ Verify kernel isolation:
+   ps aux | grep runsc
+
+Expected:
+  - All containers run in isolated gVisor sandbox.
+  - No privileged containers running.
+  - Default runtime = runsc confirmed.
+
+==============================================
+SECTION C — VERIFICATION
+==============================================
+[ ] gVisor installed and configured  
+[ ] Default runtime set to runsc  
+[ ] No privileged containers  
+[ ] Runtime sandbox isolation confirmed  
+
+==============================================
+SECTION D — HARDENING ADD-ONS
+==============================================
+- Ensure seccomp and AppArmor enabled in kubelet:
+     --seccomp-profile-root=/var/lib/kubelet/seccomp
+     --allow-privileged=false
+- Enforce PodSecurity or PSA policies (restricted baseline)
+- Monitor runtime behavior with Falco and auditd
+
+==============================================
+END OF VERY HARD DEBUG CHALLENGE
+==============================================
