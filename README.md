@@ -17,26 +17,23 @@ Content is organized as bite-sized practice labs with step-by-step instructions,
 - image-hardening
 - rbac
 
+## How to lab
+there are two types of quesction in each section:
+- wamrup 
+- 1,2,3 challenge
 
-Each lab contains:
-- broken or incomplete YAML manifests to fix
-- commands to generate certificates, create secrets and deploy resources
-- verification steps to test admission behavior and troubleshooting tips
+a warmup is a 101 introduction into topic, so I recommend to do it first.
+1,2,3 practise labs are divide into sections A,B,C, where:
+- A - problem statement, faulty files -> apply this file to your configuration
+- B - steps to verify if problem was resolved
+- C - sample solution 
 
 ## Quick start
 
 1. Install Minikube and kubectl.
 2. Start a Minikube cluster: `minikube start`
-3. Inspect a lab folder, e.g.:
-   - `cd Admissionwebhook`
-   - Read the lab file: `less practise-lab-warmup.txt`
+3. Inspect a lab folder
 4. Follow the lab instructions:
-
-Common commands used in labs:
-- Create namespace: `kubectl create namespace <name>`
-- Create tls secret: `kubectl create secret tls webhook-certs --cert=tls.crt --key=tls.key -n <namespace>`
-- Apply manifests: `kubectl apply -f <manifest.yaml>`
-- Test webhook behavior: create pods with `runAsNonRoot` true/false and observe admission responses
 
 ## Best practices covered
 

@@ -29,15 +29,21 @@ spec:
   - name: etcd
     command:
     - etcd
-    - --data-dir=/var/lib/etcd          # <--- Old path; restore used /var/lib/etcd-restore
+    - --data-dir=/var/lib/etcd
     - --listen-client-urls=https://127.0.0.1:2379
     - --advertise-client-urls=https://127.0.0.1:2379
     volumeMounts:
     - mountPath: /var/lib/etcd
       name: etcd-data
-
 ==============================================
-SECTION B — TASKS
+SECTION B — VERIFICATION
+==============================================
+[ ] Correct data-dir used (/var/lib/etcd)  
+[ ] etcd endpoint healthy  
+[ ] Cluster pods back to Running  
+[ ] Snapshot verified with correct members  
+==============================================
+SECTION C — TASKS
 ==============================================
 1️⃣ Stop kubelet temporarily:
     sudo systemctl stop kubelet
@@ -66,13 +72,7 @@ SECTION B — TASKS
     kubectl get nodes
     kubectl get pods -A
 
-==============================================
-SECTION C — VERIFICATION
-==============================================
-[ ] Correct data-dir used (/var/lib/etcd)  
-[ ] etcd endpoint healthy  
-[ ] Cluster pods back to Running  
-[ ] Snapshot verified with correct members  
+
 
 ==============================================
 END OF HARD DEBUG CHALLENGE

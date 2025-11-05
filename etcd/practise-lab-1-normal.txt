@@ -25,28 +25,36 @@ resources:
       - aescbc:
           keys:
             - name: key1
-              secret: MISSING_BASE64_KEY   # <--- Incorrect placeholder
-# Problem: "aescbc" provider must be listed before "identity" for encryption to take effect
+              secret: DEADBEEF
 
 File: /etc/kubernetes/manifests/kube-apiserver.yaml
-----------------------------------------------------
-- --encryption-provider-config=/etc/kubernetes/encryption.yaml   # <--- Wrong file path
-# The encryption config path points to a non-existent file
+with additional flag:
+- --encryption-provider-config=/etc/kubernetes/encryption.yaml 
+
+
 
 ==============================================
-SECTION B — TASKS
+SECTION B — VERIFICATION
+==============================================
+[ ] Encryption provider file fixed  
+[ ] Key base64 valid  
+[ ] kube-apiserver manifest updated  
+[ ] Secret stored encrypted in etcd
+==============================================
+SECTION C — TASKS
 ==============================================
 1️⃣ Generate a valid key:
    head -c 32 /dev/urandom | base64
 
 2️⃣ Update /etc/kubernetes/encryption-config.yaml:
    - Put the base64 key under `secret:`
-   - Move "aescbc" above "identity"
+   - Move "aescbc" above "identity" broad identity{} will overwrite everything with no encryption
    - Save and close.
 
 3️⃣ Fix kube-apiserver manifest:
    - Ensure argument reads:
        --encryption-provider-config=/etc/kubernetes/encryption-config.yaml
+   - ensure volume /etc/kubernetes/ and volumeMount is defined in manifest
 
 4️⃣ Wait for kube-apiserver to restart (Minikube auto-handles).
 
@@ -60,14 +68,6 @@ SECTION B — TASKS
 
 Expected:
   Data blob should be unreadable binary (encrypted).
-
-==============================================
-SECTION C — VERIFICATION
-==============================================
-[ ] Encryption provider file fixed  
-[ ] Key base64 valid  
-[ ] kube-apiserver manifest updated  
-[ ] Secret stored encrypted in etcd
 
 ==============================================
 END OF NORMAL DEBUG CHALLENGE

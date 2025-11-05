@@ -30,9 +30,17 @@ command:
 #  - The cert CN does not match the advertised URL (CN=minikube but expects 127.0.0.1)
 #  - apiserver certs use a different CA (kubernetes-ca, not etcd-ca)
 #  - apiserver cannot validate etcd’s cert
+==============================================
+SECTION B — VERIFICATION
+==============================================
+[ ] ETCD cert CN/SAN matches 127.0.0.1  
+[ ] apiserver uses correct etcd-ca  
+[ ] ETCD endpoint healthy  
+[ ] Cluster accessible (kubectl works)
+
 
 ==============================================
-SECTION B — TASKS
+SECTION C — TASKS
 ==============================================
 1️⃣ Inspect etcd logs:
     kubectl logs -n kube-system etcd-minikube
@@ -66,13 +74,7 @@ SECTION B — TASKS
     kubectl get pods -A
     kubectl get secrets
 
-==============================================
-SECTION C — VERIFICATION
-==============================================
-[ ] ETCD cert CN/SAN matches 127.0.0.1  
-[ ] apiserver uses correct etcd-ca  
-[ ] ETCD endpoint healthy  
-[ ] Cluster accessible (kubectl works)
+
 
 ==============================================
 SECTION D — EXTRA HARDENING

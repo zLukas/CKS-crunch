@@ -1,4 +1,4 @@
-# terminal setup 
+# logging
 
 export pods-logs-dir="cd /var/log/pod"
 export container-logs="cd /var/log/container"
@@ -6,12 +6,11 @@ export kubelet-logs="journalctl -u kubelet"
 export static-manifests="cd /etc/kubernetes/manifest"
 export k=kubectl
 
-
 # create TLS secret docs 
 k create secret tls -h
 
-# pod template create and NOT deploy:
-k run --image=<image> --dry-run=true > pod.yaml
+# create pod template create without a deploy:
+k run --image=<image> --dry-run=true -n(opt) namespace > pod.yaml
 
 # create svr for pods/deployment:
 k expose pod/deploy -h
@@ -24,7 +23,6 @@ k get pod -oyaml | grep imageID
 
 # trivy scan image for specific CVE
 trivy image <NAME> | egrep <CVE-XXX>
-
 
 # find process that uses a port
 netstat -tulpan | grep 1234 # list open port 
